@@ -4,22 +4,23 @@ import type React from "react"
 
 import { useState } from "react"
 import { useRouter } from "next/navigation"
-import { useStore, type Question } from "@/lib/store"
+import type { Question } from "@/lib/store"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ArrowLeft, Plus, Trash2, GripVertical } from "lucide-react"
+import { ArrowLeft, Plus, Trash2, GripVertical, Loader2 } from "lucide-react"
 import Link from "next/link"
 
 export default function CreateFormPage() {
   const router = useRouter()
-  const addForm = useStore((state) => state.addForm)
 
   const [title, setTitle] = useState("")
   const [description, setDescription] = useState("")
+  const [formType, setFormType] = useState<"public" | "private">("public")
+  const [emails, setEmails] = useState("")
   const [questions, setQuestions] = useState<Question[]>([
     {
       id: "1",
@@ -28,7 +29,8 @@ export default function CreateFormPage() {
       options: ["", "", "", ""],
     },
   ])
-  const [errors, setErrors] = useState<{ title?: boolean; description?: boolean }>({})
+  const [errors, setErrors] = useState<{ title?: boolean; description?: boolean; emails?: boolean }>({})
+  const [isSubmitting, setIsSubmitting] = useState(false)
 
   const addQuestion = (type: "mcq" | "text") => {
     const newQuestion: Question = {
@@ -92,13 +94,28 @@ export default function CreateFormPage() {
     )
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     // Validate
-    const newErrors: { title?: boolean; description?: boolean } = {}
+    const newErrors: { title?: boolean; description?: boolean; emails?: boolean } = {}
     if (!title.trim()) newErrors.title = true
     if (!description.trim()) newErrors.description = true
+    
+    // Validate emails for private forms
+    if (formType === "private") {
+      if (!emails.trim()) {
+        newErrors.emails = true
+      } else {
+        // Basic email validation (comma-separated)
+        const emailList = emails.split(",").map((e) => e.trim()).filter((e) => e)
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+        const invalidEmails = emailList.filter((email) => !emailRegex.test(email))
+        if (invalidEmails.length > 0 || emailList.length === 0) {
+          newErrors.emails = true
+        }
+      }
+    }
 
     if (Object.keys(newErrors).length > 0) {
       setErrors(newErrors)
@@ -119,13 +136,59 @@ export default function CreateFormPage() {
       return
     }
 
-    addForm({
-      title,
-      description,
-      questions: validQuestions,
-    })
+    setIsSubmitting(true)
 
-    router.push("/admin")
+    try {
+      // First, create the form
+      const formResponse = await fetch("/api/forms", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title,
+          description,
+          questions: validQuestions,
+          type: formType,
+        }),
+      })
+
+      if (!formResponse.ok) {
+        const error = await formResponse.json()
+        throw new Error(error.error || "Failed to create form")
+      }
+
+      const formData = await formResponse.json()
+      const formId = formData._id || formData.id
+
+      // If private form, generate UIDs and send emails
+      if (formType === "private" && emails.trim()) {
+        const emailList = emails.split(",").map((e) => e.trim()).filter((e) => e)
+        
+        const tokenResponse = await fetch("/api/forms/generate-tokens", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            formId,
+            emails: emailList,
+            formTitle: title,
+          }),
+        })
+
+        if (!tokenResponse.ok) {
+          const error = await tokenResponse.json()
+          throw new Error(error.error || "Failed to generate and send access tokens")
+        }
+      }
+
+      router.push("/admin")
+    } catch (error) {
+      console.error("Error creating form:", error)
+      alert(error instanceof Error ? error.message : "Failed to create form. Please try again.")
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -187,6 +250,53 @@ export default function CreateFormPage() {
                 />
                 {errors.description && <p className="text-sm text-destructive">Description is required</p>}
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="formType">
+                  Form Type <span className="text-destructive">*</span>
+                </Label>
+                <Select value={formType} onValueChange={(value) => setFormType(value as "public" | "private")}>
+                  <SelectTrigger id="formType">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="public">Public - Anyone can give feedback</SelectItem>
+                    <SelectItem value="private">Private - Only specific users can give feedback</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  {formType === "public"
+                    ? "Public forms are visible to everyone"
+                    : "Private forms require email addresses to send access tokens"}
+                </p>
+              </div>
+
+              {formType === "private" && (
+                <div className="space-y-2">
+                  <Label htmlFor="emails">
+                    Gmail Addresses <span className="text-destructive">*</span>
+                  </Label>
+                  <Textarea
+                    id="emails"
+                    value={emails}
+                    onChange={(e) => {
+                      setEmails(e.target.value)
+                      setErrors({ ...errors, emails: false })
+                    }}
+                    placeholder="user1@gmail.com, user2@gmail.com, user3@gmail.com"
+                    className={errors.emails ? "border-destructive" : ""}
+                    rows={4}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Enter Gmail addresses separated by commas. Each user will receive a unique access token via email.
+                  </p>
+                  {errors.emails && (
+                    <p className="text-sm text-destructive">
+                      Please enter valid Gmail addresses separated by commas
+                    </p>
+                  )}
+                </div>
+              )}
             </CardContent>
           </Card>
 
@@ -308,11 +418,18 @@ export default function CreateFormPage() {
 
           {/* Submit */}
           <div className="flex gap-4">
-            <Button type="submit" size="lg" className="flex-1">
-              Create Form
+            <Button type="submit" size="lg" className="flex-1" disabled={isSubmitting}>
+              {isSubmitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  Creating...
+                </>
+              ) : (
+                "Create Form"
+              )}
             </Button>
             <Link href="/admin" className="flex-1">
-              <Button type="button" variant="outline" size="lg" className="w-full bg-transparent">
+              <Button type="button" variant="outline" size="lg" className="w-full bg-transparent" disabled={isSubmitting}>
                 Cancel
               </Button>
             </Link>
