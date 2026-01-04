@@ -168,7 +168,7 @@ Stores access tokens for private forms (one-time use).
 ```typescript
 {
   formId: string      // Reference to form
-  email: string       // Recipient email
+  email: string       // Recipient email (ENCRYPTED - AES-256-GCM)
   uid: string         // Unique 12-character access token
   used: boolean       // Whether token has been used
   usedAt?: Date       // When token was used
@@ -176,12 +176,14 @@ Stores access tokens for private forms (one-time use).
 }
 ```
 
+**Note:** Email addresses are encrypted using AES-256-GCM before being stored in the database to maintain anonymity. The encryption key is stored in the `ENCRYPTION_KEY` environment variable.
+
 **Example:**
 ```json
 {
   "_id": "507f1f77bcf86cd799439013",
   "formId": "507f1f77bcf86cd799439011",
-  "email": "student@example.com",
+  "email": "encrypted:base64:salt:iv:tag:data",
   "uid": "aB3dEf9hIjKl",
   "used": false,
   "createdAt": "2024-01-15T10:35:00Z"
@@ -407,6 +409,7 @@ Stores access tokens for private forms (one-time use).
 - **Uniqueness**: Database check ensures no duplicates
 - **One-Time Use**: Token marked as `used` after validation
 - **Email Delivery**: Tokens sent via Gmail SMTP
+- **Email Encryption**: Email addresses are encrypted (AES-256-GCM) before storing in database
 - **Access Storage**: Validated tokens stored in localStorage
 - **Token Validation**: Server-side check before granting access
 
@@ -718,7 +721,19 @@ MONGODB_URI=mongodb+srv://...
 EMAIL_USER=your-email@gmail.com
 EMAIL_PASSWORD=your-app-password
 NEXT_PUBLIC_BASE_URL=https://yourdomain.com
+ENCRYPTION_KEY=your-encryption-key-here  # Required for email encryption
 ```
+
+**Generating Encryption Key:**
+```bash
+# Generate a secure 32-byte key (base64 encoded)
+openssl rand -base64 32
+
+# Or use Node.js
+node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
+```
+
+**Important:** The `ENCRYPTION_KEY` is used to encrypt email addresses stored in the database. Keep this key secure and never change it after data has been encrypted, as you won't be able to decrypt existing emails.
 
 ### Build Process
 ```bash

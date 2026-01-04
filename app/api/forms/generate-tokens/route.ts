@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import connectDB from '@/lib/mongodb'
 import AccessToken from '@/models/AccessToken'
 import { generateUID, sendAccessTokenEmail } from '@/lib/email'
+import { encryptEmail } from '@/lib/encryption'
 
 // POST generate access tokens for private forms
 export async function POST(request: NextRequest) {
@@ -35,18 +36,22 @@ export async function POST(request: NextRequest) {
           }
         }
         
-        // Create access token
+        // Encrypt email before saving to database
+        const trimmedEmail = email.trim()
+        const encryptedEmail = encryptEmail(trimmedEmail)
+        
+        // Create access token with encrypted email
         const accessToken = new AccessToken({
           formId,
-          email: email.trim(),
+          email: encryptedEmail,
           uid,
           used: false,
         })
         
         await accessToken.save()
         
-        // Send email
-        const emailResult = await sendAccessTokenEmail(email.trim(), formTitle, uid, formId)
+        // Send email (use plain email for sending, not encrypted)
+        const emailResult = await sendAccessTokenEmail(trimmedEmail, formTitle, uid, formId)
         
         if (emailResult.success) {
           results.push({ email, uid, sent: true })
